@@ -18,12 +18,12 @@ default_events:
   # - commit_comment
   # - create
   # - delete
-  - deployment
+  # - deployment
   # - deployment_status
   # - fork
   # - gollum
-  # - issue_comment
-  # - issues
+  - issue_comment
+  - issues
   # - label
   # - milestone
   # - member
@@ -58,7 +58,7 @@ default_permissions:
 
   # Checks on code.
   # https://developer.github.com/v3/apps/permissions/#permission-on-checks
-  # checks: read
+  checks: write
 
   # Repository contents, commits, branches, downloads, releases, and merges.
   # https://developer.github.com/v3/apps/permissions/#permission-on-contents
@@ -66,11 +66,11 @@ default_permissions:
 
   # Deployments and deployment statuses.
   # https://developer.github.com/v3/apps/permissions/#permission-on-deployments
-  deployments: write
+  # deployments: write
 
   # Issues and related comments, assignees, labels, and milestones.
   # https://developer.github.com/v3/apps/permissions/#permission-on-issues
-  # issues: write
+  issues: read  
 
   # Search repositories, list collaborators, and access repository '.
   # https://developer.github.com/v3/apps/permissions/#metadata-permissions

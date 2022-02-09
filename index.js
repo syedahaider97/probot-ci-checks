@@ -1,56 +1,101 @@
-// Deployments API example
-// See: https://developer.github.com/v3/repos/deployments/ to learn more
+const commands = require('probot-commands')
 
 /**
  * This is the main entrypoint to your Probot app
  * @param {import('probot').Probot} app
  */
-module.exports = (app) => {
-  // Your code here
-  app.log.info("Yay, the app was loaded!");
-  app.on(
-    ["pull_request.opened", "pull_request.synchronize"],
-    async (context) => {
-      // Creates a deployment on a pull request event
-      // Then sets the deployment status to success
-      // NOTE: this example doesn't actually integrate with a cloud
-      // provider to deploy your app, it just demos the basic API usage.
-      app.log.info(context.payload);
+ module.exports = (app) => {
+  app.on(['pull_request.opened', 'pull_request.synchronize', 'pull_request.reopened'], async(context) => {
+    runCI(context, 'pull_request')
+  })
 
-      // Probot API note: context.repo() => { username: 'hiimbex', repo: 'testing-things' }
-      const res = await context.octokit.repos.createDeployment(
-        context.repo({
-          ref: context.payload.pull_request.head.ref, // The ref to deploy. This can be a branch, tag, or SHA.
-          task: "deploy", // Specifies a task to execute (e.g., deploy or deploy:migrations).
-          auto_merge: true, // Attempts to automatically merge the default branch into the requested ref, if it is behind the default branch.
-          required_contexts: [], // The status contexts to verify against commit status checks. If this parameter is omitted, then all unique contexts will be verified before a deployment is created. To bypass checking entirely pass an empty array. Defaults to all unique contexts.
-          payload: {
-            schema: "rocks!",
-          }, // JSON payload with extra information about the deployment. Default: ""
-          environment: "production", // Name for the target deployment environment (e.g., production, staging, qa)
-          description: "My Probot App's first deploy!", // Short description of the deployment
-          transient_environment: false, // Specifies if the given environment is specific to the deployment and will no longer exist at some point in the future.
-          production_environment: true, // Specifies if the given environment is one that end-users directly interact with.
-        })
-      );
+  commands(app, 'runCI', async (context, command) => {  
+      runCI(context, 'issue')  
+  })
 
-      const deploymentId = res.data.id;
-      await context.octokit.repos.createDeploymentStatus(
-        context.repo({
-          deployment_id: deploymentId,
-          state: "success", // The state of the status. Can be one of error, failure, inactive, pending, or success
-          log_url: "https://example.com", // The log URL to associate with this status. This URL should contain output to keep the user updated while the task is running or serve as historical information for what happened in the deployment.
-          description: "My Probot App set a deployment status!", // A short description of the status.
-          environment_url: "https://example.com", // Sets the URL for accessing your environment.
-          auto_inactive: true, // Adds a new inactive status to all prior non-transient, non-production environment deployments with the same repository and environment name as the created status's deployment. An inactive status is only added to deployments that had a success state.
-        })
-      );
+  async function runCI(context, source) {
+    let headSha;
+
+    if (source == "pull_request") {
+      headSha = context.payload.pull_request.head.sha
+    } else if (source == "issue") {
+      let pr_number = context.payload.issue.number
+      let pr = await context.octokit.pulls.get({owner: process.env.OWNER, repo: process.env.REPO, pull_number: pr_number})
+      headSha = pr.data.head.sha
     }
-  );
+    // Initialize a Check Run
+    let checkRun = await createCheckRun(context, headSha)
 
-  // For more information on building apps:
-  // https://probot.github.io/docs/
+    // Process Check Logic
+    let result = await checkFileExtensions(context, source)
+    
+    // Update Check with Resolution
+    await resolveCheck(context, headSha, checkRun, result)
+  }
 
-  // To get your app running against GitHub, see:
-  // https://probot.github.io/docs/development/
+  async function createCheckRun(context, headSha) {
+  
+    const startTime = new Date();
+
+    return await context.octokit.checks.create({
+      headers: {
+        // accept: "application/vnd.github.v3+json"
+        accept: "application/vnd.github.antiope-preview+json"
+      },
+      owner: process.env.OWNER,
+      repo: process.env.REPO,
+      name: "Probot CI Test",
+      status: "queued",
+      started_at: startTime,
+      head_sha: headSha,
+      output: {
+        title: "Queuing Probot CI Test",
+        summary: "The Probot CI Test will begin shortly",
+      },
+    })
+  }
+
+  async function checkFileExtensions(context, source) {
+    let owner = context.payload.repository.full_name.split('/')[0]
+    let repo = context.payload.repository.name
+    let pull_number = context.payload[source].number
+    let per_page = 100
+    
+    // Returns a list of all changed files
+    const changedFiles = await context.octokit.paginate(context.octokit.pulls.listFiles,{owner, repo, pull_number, per_page}) 
+    
+    // Loop through files and check for extension
+    for (let file of changedFiles) {
+      // Remove the directory structure and just get the file name
+      let fileName = file.filename.split('/').pop()
+      // Make sure that a split() on the filename results in an array of at minimum two
+      // The first value should be the name of the file (before the dot) and the second should be its extension (after the dot)
+      if (fileName.split('.').length < 2) {
+        return "failure"
+      }
+    }
+    // Could not find a reason to return false; therefore test is successful 
+    return "success"
+  }
+
+  async function resolveCheck(context, headSha, checkRun, result) {
+    
+    await context.octokit.checks.update({
+      headers: {
+        accept: "application/vnd.github.antiope-preview+json"
+        // accept: "application/vnd.github.v3+json"
+      },
+      owner: process.env.OWNER,
+      repo: process.env.REPO,
+      name: "Probot CI Test",
+      check_run_id: checkRun.data.id,
+      status: "completed",
+      head_sha: headSha,
+      conclusion: result,
+      output: {
+        title: "Probot CI Test Complete",
+        summary: "Result is " + result,
+      },
+    })
+  }
 };
